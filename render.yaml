@@ -5,7 +5,8 @@ services:
     runtime: python
     plan: free
     autoDeploy: false
-    buildCommand:       pip uninstall -y pycrypto
-      pip install pycryptodome
+    buildCommand: |
+      pip uninstall -y pycrypto
+      pip install pycryptodome==3.18.0
       pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn config.app:app --host 0.0.0.0 --port $PORT
