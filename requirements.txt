@@ -16,3 +16,4 @@ fastapi
 validators
 pyrebase
 python-multipart
+pycryptodome
