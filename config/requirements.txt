@@ -1,3 +1,12 @@
+# google-generativeai==0.8.3
+# python-dotenv==1.0.1
+# langchain==0.3.14
+# PyPDF2==3.0.1
+# faiss-cpu==1.9.0
+# langchain_google_genai==2.0.7
+# langchain_community
+# pyrebase
+
 langchain
 google-generativeai
 langchain_google_genai
@@ -11,8 +20,3 @@ python-dotenv
 firebase-admin
 faiss-cpu
 pymupdf
-uvicorn
-fastapi
-validators
-pyrebase64
-python-multipart
