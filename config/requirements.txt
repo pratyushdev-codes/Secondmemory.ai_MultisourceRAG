@@ -7,16 +7,16 @@
 # langchain_community
 # pyrebase
 
-langchain
-google-generativeai
-langchain_google_genai
-langchain_community
-streamlit
-langchain
-langchain-google-genai
-langchain-community
-pypdf
-python-dotenv
-firebase-admin
-faiss-cpu
-pymupdf
+# langchain
+# google-generativeai
+# langchain_google_genai
+# langchain_community
+# streamlit
+# langchain
+# langchain-google-genai
+# langchain-community
+# pypdf
+# python-dotenv
+# firebase-admin
+# faiss-cpu
+# pymupdf
