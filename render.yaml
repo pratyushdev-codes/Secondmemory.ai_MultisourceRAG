@@ -1,3 +1,16 @@
+# services:
+#   # A Docker web service
+#   - type: server
+#     name: fastapi-secondmemoryrag
+#     runtime: python
+#     plan: free
+#     autoDeploy: false
+#     buildCommand: |
+#       pip uninstall -y pycrypto
+#       pip install pycryptodome==3.18.0
+#       pip install -r requirements.txt
+#     startCommand: uvicorn config.app:app --host 0.0.0.0 --port $PORT
+
 services:
   # A Docker web service
   - type: server
