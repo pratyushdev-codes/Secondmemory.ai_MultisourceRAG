@@ -16,4 +16,4 @@ fastapi
 validators
 pyrebase
 python-multipart
-pycryptodome
+pycryptodome==3.20.0
