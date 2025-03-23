@@ -14,5 +14,6 @@ pymupdf
 uvicorn
 fastapi
 validators
+pyrebase
 pyrebase64
 python-multipart
