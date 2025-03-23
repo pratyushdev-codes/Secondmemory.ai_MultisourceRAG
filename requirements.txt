@@ -16,4 +16,4 @@ fastapi
 validators
 pyrebase
 python-multipart
-pycryptodome==3.20.0
+pycrypto==2.6.1 --no-binary pycrypto
