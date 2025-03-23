@@ -9,12 +9,14 @@ import time
 import validators
 from apscheduler.schedulers.background import BackgroundScheduler
 import shutil
-from RAGengine import (
+## Chaning this --> lets see if it works
+from .RAGengine import (
     PDFProcessor,
     get_conversational_chain,
     handle_user_input,
     db
 )
+
 
 app = FastAPI(title="Multisource RAG API", version="2.0")
 
