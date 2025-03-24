@@ -121,9 +121,10 @@ async def upload_pdfs(files: List[UploadFile] = File(...)):
         except Exception as e:
             raise HTTPException(500, f"Vector store operation failed: {str(e)}")
         
-        return UploadResponse(
-            message=f"Processed {len(files)} PDF(s)",
+         return UploadResponse(
+            message=f"Processed {len(files)} PDF(s)",  # Fixed f-string
             processed_chunks=len(documents)
+        )  
             
     except HTTPException as he:
         raise he
