@@ -11,7 +11,7 @@ import time
 import validators
 from apscheduler.schedulers.background import BackgroundScheduler
 import shutil
-from RAGengine import (
+from .RAGengine import (
     PDFProcessor,
     get_conversational_chain,
     handle_user_input,
