@@ -124,7 +124,7 @@ async def upload_pdfs(files: List[UploadFile] = File(...)):
          return UploadResponse(
             message=f"Processed {len(files)} PDF(s)",  # Fixed f-string
             processed_chunks=len(documents)
-        )  
+          )  
             
     except HTTPException as he:
         raise he
