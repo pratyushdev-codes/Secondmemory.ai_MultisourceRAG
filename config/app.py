@@ -104,12 +104,21 @@ async def upload_pdfs(files: List[UploadFile] = File(...)):
 
         try:
             if os.path.exists("./pdf_faiss_index"):
-                pdf_db = FAISS.load_local("./pdf_faiss_index", embeddings)
+                # Add dangerous deserialization flag
+                pdf_db = FAISS.load_local(
+                    "./pdf_faiss_index", 
+                    embeddings,
+                    allow_dangerous_deserialization=True
+                )
                 pdf_db.add_documents(documents)
             else:
                 pdf_db = FAISS.from_documents(documents, embeddings)
             
-            pdf_db.save_local("./pdf_faiss_index")
+            # Add dangerous serialization flag when saving
+            pdf_db.save_local(
+                "./pdf_faiss_index",
+                allow_dangerous_deserialization=True
+            )
         except Exception as e:
             raise HTTPException(500, f"Vector store operation failed: {str(e)}")
         
@@ -158,12 +167,19 @@ async def process_websites(request: WebsiteUploadRequest):
                 
                 try:
                     if os.path.exists("./web_faiss_index"):
-                        web_db = FAISS.load_local("./web_faiss_index", embeddings)
+                        web_db = FAISS.load_local(
+                            "./web_faiss_index", 
+                            embeddings,
+                            allow_dangerous_deserialization=True
+                        )
                         web_db.add_documents(chunks)
                     else:
                         web_db = FAISS.from_documents(chunks, embeddings)
                     
-                    web_db.save_local("./web_faiss_index")
+                    web_db.save_local(
+                        "./web_faiss_index",
+                        allow_dangerous_deserialization=True
+                    )
                 except Exception as e:
                     raise HTTPException(500, f"Vector store operation failed: {str(e)}")
                 
