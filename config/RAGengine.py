@@ -210,13 +210,16 @@ def create_tools(pdf_processor: PDFProcessor):
     return tools
 
 def search_pdfs(query: str) -> str:
-    """Search through uploaded PDFs"""
     try:
         embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-        if not os.path.exists("faiss_index"):
+        if not os.path.exists("./pdf_faiss_index"):
             return "NO_PDF_AVAILABLE"
             
-        pdf_db = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
+        pdf_db = FAISS.load_local(
+            "./pdf_faiss_index", 
+            embeddings, 
+            allow_dangerous_deserialization=True
+        )
         docs = pdf_db.similarity_search(query, k=3)
         
         if not docs:
