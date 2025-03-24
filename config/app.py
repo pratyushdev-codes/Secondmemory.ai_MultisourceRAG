@@ -82,6 +82,8 @@ async def startup_event():
     scheduler.start()
 
 # Endpoints
+# ... (keep all previous imports and setup)
+
 @app.post("/upload-pdfs/", response_model=UploadResponse)
 async def upload_pdfs(files: List[UploadFile] = File(...)):
     try:
@@ -104,28 +106,24 @@ async def upload_pdfs(files: List[UploadFile] = File(...)):
 
         try:
             if os.path.exists("./pdf_faiss_index"):
-                # Add dangerous deserialization flag
+                # Only add dangerous deserialization to LOAD operation
                 pdf_db = FAISS.load_local(
                     "./pdf_faiss_index", 
                     embeddings,
-                    allow_dangerous_deserialization=True
+                    allow_dangerous_deserialization=True  # Only here
                 )
                 pdf_db.add_documents(documents)
             else:
                 pdf_db = FAISS.from_documents(documents, embeddings)
             
-            # Add dangerous serialization flag when saving
-            pdf_db.save_local(
-                "./pdf_faiss_index",
-                allow_dangerous_deserialization=True
-            )
+            # Save without dangerous deserialization parameter
+            pdf_db.save_local("./pdf_faiss_index")
         except Exception as e:
             raise HTTPException(500, f"Vector store operation failed: {str(e)}")
         
         return UploadResponse(
             message=f"Processed {len(files)} PDF(s)",
             processed_chunks=len(documents)
-        )
             
     except HTTPException as he:
         raise he
@@ -170,16 +168,14 @@ async def process_websites(request: WebsiteUploadRequest):
                         web_db = FAISS.load_local(
                             "./web_faiss_index", 
                             embeddings,
-                            allow_dangerous_deserialization=True
+                            allow_dangerous_deserialization=True  # Only here
                         )
                         web_db.add_documents(chunks)
                     else:
                         web_db = FAISS.from_documents(chunks, embeddings)
                     
-                    web_db.save_local(
-                        "./web_faiss_index",
-                        allow_dangerous_deserialization=True
-                    )
+                    # Save without dangerous deserialization parameter
+                    web_db.save_local("./web_faiss_index")
                 except Exception as e:
                     raise HTTPException(500, f"Vector store operation failed: {str(e)}")
                 
@@ -207,6 +203,8 @@ async def process_websites(request: WebsiteUploadRequest):
         raise he
     except Exception as e:
         raise HTTPException(500, f"Website processing failed: {str(e)}")
+
+
 
 @app.post("/ask/", response_model=QuestionResponse)
 async def ask_question(request: QuestionRequest):
