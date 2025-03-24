@@ -1,3 +1,6 @@
+
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_community.vectorstores import FAISS
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
@@ -91,22 +94,34 @@ async def upload_pdfs(files: List[UploadFile] = File(...)):
         raw_text = pdf_processor.get_pdf_text(pdf_contents)
         documents = pdf_processor.create_semantic_chunks(raw_text)
         
-        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-        if os.path.exists("./pdf_faiss_index"):
-            pdf_db = FAISS.load_local("./pdf_faiss_index", embeddings)
-            pdf_db.add_documents(documents)
-        else:
-            pdf_db = FAISS.from_documents(documents, embeddings)
-        
-        pdf_db.save_local("./pdf_faiss_index")
+        # Add error handling for embeddings
+        try:
+            embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+        except Exception as e:
+            raise HTTPException(500, f"Embeddings initialization failed: {str(e)}")
+
+        # Add FAISS error handling
+        try:
+            if os.path.exists("./pdf_faiss_index"):
+                pdf_db = FAISS.load_local("./pdf_faiss_index", embeddings)
+                pdf_db.add_documents(documents)
+            else:
+                pdf_db = FAISS.from_documents(documents, embeddings)
+            
+            pdf_db.save_local("./pdf_faiss_index")
+        except Exception as e:
+            raise HTTPException(500, f"Vector store operation failed: {str(e)}")
         
         return UploadResponse(
             message=f"Processed {len(files)} PDF(s)",
             processed_chunks=len(documents)
-        )  # <-- This closing parenthesis was missing
+        )
             
+    except HTTPException as he:
+        raise he
     except Exception as e:
         raise HTTPException(500, f"PDF processing failed: {str(e)}")
+
 
 @app.post("/process-websites/", response_model=WebsiteProcessingResponse)
 async def process_websites(request: WebsiteUploadRequest):
@@ -119,6 +134,12 @@ async def process_websites(request: WebsiteUploadRequest):
         existing_data = db.child("websiteData").get().val() or {}
         existing_urls = {v['url'] for v in existing_data.values() if 'url' in v}
         
+        # Initialize embeddings once
+        try:
+            embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+        except Exception as e:
+            raise HTTPException(500, f"Embeddings initialization failed: {str(e)}")
+
         for url in request.urls:
             str_url = str(url)
             if str_url in existing_urls:
@@ -136,14 +157,17 @@ async def process_websites(request: WebsiteUploadRequest):
                     overlap=request.overlap
                 )
                 
-                embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-                if os.path.exists("./web_faiss_index"):
-                    web_db = FAISS.load_local("./web_faiss_index", embeddings)
-                    web_db.add_documents(chunks)
-                else:
-                    web_db = FAISS.from_documents(chunks, embeddings)
+                try:
+                    if os.path.exists("./web_faiss_index"):
+                        web_db = FAISS.load_local("./web_faiss_index", embeddings)
+                        web_db.add_documents(chunks)
+                    else:
+                        web_db = FAISS.from_documents(chunks, embeddings)
+                    
+                    web_db.save_local("./web_faiss_index")
+                except Exception as e:
+                    raise HTTPException(500, f"Vector store operation failed: {str(e)}")
                 
-                web_db.save_local("./web_faiss_index")
                 total_chunks += len(chunks)
                 
                 db.child("websiteData").push({
@@ -164,6 +188,8 @@ async def process_websites(request: WebsiteUploadRequest):
             duplicates_skipped=duplicates
         )
         
+    except HTTPException as he:
+        raise he
     except Exception as e:
         raise HTTPException(500, f"Website processing failed: {str(e)}")
 
