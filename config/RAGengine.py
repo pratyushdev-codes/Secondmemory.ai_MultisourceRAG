@@ -18,6 +18,7 @@ from pyrebase import pyrebase  # Change this line
 from typing import List, Optional
 from io import BytesIO
 import time
+from langchain_community.document_loaders import WebBaseLoader
 # from firebase import Firebase
 import pyrebase
 os.environ["USER_AGENT"] = "secondmemory.ai/1.0 (birole.pratyush@gmail.com)"
@@ -42,9 +43,31 @@ config = {
     "storageBucket": "secondmemoryai.appspot.com"
 }
 
-firebase = pyrebase.initialize_app(config)
-db = firebase.database()
+# firebase = pyrebase.initialize_app(config)
+# db = firebase.database()
 
+try:
+    firebase = pyrebase.initialize_app(config)
+    db = firebase.database()
+except Exception as e:
+    print(f"Firebase initialization error: {str(e)}")
+    # Provide a fallback db that won't crash your app
+    class DummyDB:
+        def child(self, path):
+            return self
+        def get(self):
+            return DummyResponse()
+        def push(self):
+            return self
+        def set(self, value):
+            pass
+            
+    class DummyResponse:
+        def val(self):
+            return {}
+            
+    db = DummyDB()
+    
 
 class PDFProcessor:
     def __init__(self):
@@ -270,6 +293,40 @@ def get_conversational_chain():
     )
 
 # Then update the handle_user_input function:
+# def handle_user_input(user_question: str, agent_executor: AgentExecutor) -> dict:
+#     """Process user input and return response with intermediate steps"""
+#     try:
+#         response = agent_executor.invoke({
+#             "input": user_question,
+#         })
+        
+#         # Extract intermediate steps
+#         steps = []
+#         if "intermediate_steps" in response:
+#             for step in response["intermediate_steps"]:
+#                 # Extract action details
+#                 action = step[0]
+#                 observation = step[1]
+                
+#                 # Format action details
+#                 action_details = {
+#                     "tool": action.tool if hasattr(action, 'tool') else str(action),
+#                     "tool_input": action.tool_input if hasattr(action, 'tool_input') else "",
+#                     "log": action.log if hasattr(action, 'log') else ""
+#                 }
+                
+#                 # Add step to list
+#                 steps.append({
+#                     "action": action_details,
+#                     "observation": str(observation)
+#                 })
+        
+#         return {
+#             "final_response": response["output"],
+#             "intermediate_steps": steps
+#         }
+#     except Exception as e:
+#         raise Exception(f"Error processing question: {str(e)}") 
 def handle_user_input(user_question: str, agent_executor: AgentExecutor) -> dict:
     """Process user input and return response with intermediate steps"""
     try:
@@ -299,8 +356,12 @@ def handle_user_input(user_question: str, agent_executor: AgentExecutor) -> dict
                 })
         
         return {
-            "final_response": response["output"],
+            "final_response": response.get("output", "No response generated"),
             "intermediate_steps": steps
         }
     except Exception as e:
-        raise Exception(f"Error processing question: {str(e)}") 
+        print(f"Error processing question: {str(e)}")
+        return {
+            "final_response": f"An error occurred: {str(e)}",
+            "intermediate_steps": []
+        }
