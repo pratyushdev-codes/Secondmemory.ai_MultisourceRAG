@@ -211,8 +211,20 @@ async def ask_question(request: QuestionRequest):
         if not request.question.strip():
             raise HTTPException(422, "Empty question provided")
             
-        agent = get_conversational_chain()
-        response = handle_user_input(request.question, agent)
+        # Log the incoming question
+        print(f"Received question: {request.question}")
+        
+        try:
+            agent = get_conversational_chain()
+        except Exception as agent_init_error:
+            print(f"Agent initialization error: {str(agent_init_error)}")
+            raise HTTPException(500, f"Failed to initialize agent: {str(agent_init_error)}")
+        
+        try:
+            response = handle_user_input(request.question, agent)
+        except Exception as processing_error:
+            print(f"Question processing error: {str(processing_error)}")
+            raise HTTPException(500, f"Query processing failed: {str(processing_error)}")
         
         validated_steps = []
         for step in response.get("intermediate_steps", []):
@@ -231,7 +243,10 @@ async def ask_question(request: QuestionRequest):
     except HTTPException as he:
         raise he
     except Exception as e:
-        raise HTTPException(500, f"Query failed: {str(e)}")
+        import traceback
+        print(f"Unhandled error: {str(e)}")
+        print(traceback.format_exc())
+        raise HTTPException(500, f"Unexpected error: {str(e)}")
 
 @app.get("/health")
 async def health_check():
