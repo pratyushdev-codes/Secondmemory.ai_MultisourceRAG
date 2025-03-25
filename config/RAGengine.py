@@ -330,23 +330,29 @@ def get_conversational_chain():
 def handle_user_input(user_question: str, agent_executor: AgentExecutor) -> dict:
     """Process user input and return response with intermediate steps"""
     try:
+        # Add verbose logging
+        print(f"Processing question: {user_question}")
+        
         response = agent_executor.invoke({
             "input": user_question,
         })
         
+        # Detailed logging of the response
+        print(f"Agent response: {response}")
+        
         # Extract intermediate steps
         steps = []
-        if "intermediate_steps" in response:
+        if response.get("intermediate_steps"):
             for step in response["intermediate_steps"]:
                 # Extract action details
                 action = step[0]
                 observation = step[1]
                 
-                # Format action details
+                # More robust action details extraction
                 action_details = {
-                    "tool": action.tool if hasattr(action, 'tool') else str(action),
-                    "tool_input": action.tool_input if hasattr(action, 'tool_input') else "",
-                    "log": action.log if hasattr(action, 'log') else ""
+                    "tool": getattr(action, 'tool', str(action)),
+                    "tool_input": getattr(action, 'tool_input', ''),
+                    "log": getattr(action, 'log', '')
                 }
                 
                 # Add step to list
@@ -360,7 +366,11 @@ def handle_user_input(user_question: str, agent_executor: AgentExecutor) -> dict
             "intermediate_steps": steps
         }
     except Exception as e:
+        # More detailed error logging
+        import traceback
         print(f"Error processing question: {str(e)}")
+        print(traceback.format_exc())
+        
         return {
             "final_response": f"An error occurred: {str(e)}",
             "intermediate_steps": []
