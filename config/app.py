@@ -7,6 +7,7 @@ from pydantic import BaseModel, HttpUrl, model_validator
 import uvicorn
 import os
 from io import BytesIO
+from langchain_community.document_loaders import WebBaseLoader
 import time
 import validators
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -81,6 +82,10 @@ async def startup_event():
     scheduler.add_job(check_and_delete_old_index, 'interval', minutes=5)
     scheduler.start()
 
+@app.get("/")
+async def root():
+    return {"message": "SecondMemory.AI API is running", "status": "ok"}
+    
 # Endpoints
 @app.post("/upload-pdfs/", response_model=UploadResponse)
 async def upload_pdfs(files: List[UploadFile] = File(...)):
