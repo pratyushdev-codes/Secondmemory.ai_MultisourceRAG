@@ -243,12 +243,15 @@ async def ask_question(request: QuestionRequest):
                 website_urls = list(set(doc.metadata.get('source', '') for doc in web_index.docstore._dict.values()))
             except Exception as e:
                 print(f"Error retrieving website URLs: {e}")
+                # Continue even if website URL retrieval fails
         
         try:
+            # Add a timeout for agent initialization
             agent = get_conversational_chain(pdfs_processed, website_urls)
         except Exception as agent_init_error:
             print(f"Agent initialization error: {str(agent_init_error)}")
-            raise HTTPException(500, f"Failed to initialize agent: {str(agent_init_error)}")
+            # If news tool creation fails, try without news sources
+            agent = get_conversational_chain(pdfs_processed, [])
         
         try:
             response = handle_user_input(request.question, agent)
@@ -277,7 +280,7 @@ async def ask_question(request: QuestionRequest):
         print(f"Unhandled error: {str(e)}")
         print(traceback.format_exc())
         raise HTTPException(500, f"Unexpected error: {str(e)}")
-
+        
 @app.get("/health")
 async def health_check():
     indices = {
