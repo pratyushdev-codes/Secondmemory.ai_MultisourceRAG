@@ -103,10 +103,11 @@ def create_tools(pdfs_processed: bool = False, websites: List[str] = []):
         try:
             loader = WebBaseLoader(
                 websites,
-                verify_ssl=False,
+                verify_ssl=True,  # Enable SSL verification
                 requests_kwargs={
                     "timeout": 10,
-                    "headers": {"User-Agent": os.environ["USER_AGENT"]}
+                    "headers": {"User-Agent": os.environ["USER_AGENT"]},
+                    "verify_ssl": True  # Explicit SSL verification
                 }
             )
             documents = PDFProcessor().create_semantic_chunks("\n\n".join(doc.page_content for doc in loader.load()))
@@ -121,37 +122,52 @@ def create_tools(pdfs_processed: bool = False, websites: List[str] = []):
         except Exception as e:
             print(f"Web tool creation failed: {e}")
     
-    # Add news tool
+    # Add news tool with more robust error handling
     try:
+        # Use smaller set of news sources to reduce load
         news_urls = [
-            "https://news.google.com/home?hl=en-IN&gl=IN&ceid=IN:en",
-            "https://www.bbc.com/news",
-            "https://www.reuters.com/world/"
-            "https://search.yahoo.com/search?p=india&fr=uh3_news_web&fr2=p%3Anews%2Cm%3Asb&.tsrc=uh3_news_web"
+            "https://www.reuters.com/world/"  # More reliable news source
         ]
         
-        news_loader = WebBaseLoader(
+        loader = WebBaseLoader(
             news_urls,
-            verify_ssl=False,
+            verify_ssl=True,  # Enable SSL verification
             requests_kwargs={
-                "timeout": 10,
-                "headers": {"User-Agent": os.environ["USER_AGENT"]}
+                "timeout": 15,  # Increased timeout
+                "headers": {
+                    "User-Agent": os.environ["USER_AGENT"],
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                },
+                "verify_ssl": True  # Explicit SSL verification
             }
         )
         
+        # Limit the amount of text processed
+        loaded_docs = loader.load()
+        combined_text = "\n\n".join(
+            doc.page_content[:2000] for doc in loaded_docs  # Limit text length
+        )
+        
         news_documents = PDFProcessor().create_semantic_chunks(
-            "\n\n".join(doc.page_content for doc in news_loader.load())
+            combined_text,
+            chunk_size=300,  # Smaller chunk size
+            overlap=30
         )
         
-        news_embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-        news_vectordb = FAISS.from_documents(news_documents, news_embeddings)
-        
-        news_tool = create_retriever_tool(
-            news_vectordb.as_retriever(search_kwargs={"k": 3}),
-            "news_search",
-            "Search for recent news, top news, trends, and real-time updates. Provides global news coverage."
-        )
-        tools.append(news_tool)
+        # Check if we have documents before creating vector store
+        if news_documents:
+            news_embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+            news_vectordb = FAISS.from_documents(news_documents, news_embeddings)
+            
+            news_tool = create_retriever_tool(
+                news_vectordb.as_retriever(search_kwargs={"k": 3}),
+                "news_search",
+                "Search for recent global news and updates from Reuters."
+            )
+            tools.append(news_tool)
+        else:
+            print("No news documents could be processed")
+    
     except Exception as e:
         print(f"News tool creation failed: {e}")
     
