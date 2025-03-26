@@ -15,8 +15,7 @@ import shutil
 from config.RAGengine import (
     PDFProcessor,
     get_conversational_chain,
-    handle_user_input,
-    db
+    handle_user_input
 )
 
 app = FastAPI(title="Multisource RAG API", version="2.0")
@@ -57,7 +56,6 @@ class WebsiteProcessingResponse(BaseModel):
     message: str
     processed_urls: List[str]
     stored_chunks: int
-    duplicates_skipped: int
 
 # Index Maintenance
 def check_and_delete_old_index():
@@ -69,10 +67,6 @@ def check_and_delete_old_index():
                 if (time.time() - last_modified) > 900:
                     shutil.rmtree(index_dir)
                     print(f"Cleaned {index_dir}")
-                    db.reference('indexStatus').push().set({
-                        'indexType': os.path.basename(index_dir),
-                        'lastCleaned': time.ctime()
-                    })
         except Exception as e:
             print(f"Index cleanup error: {str(e)}")
 
@@ -138,10 +132,6 @@ async def process_websites(request: WebsiteUploadRequest):
         pdf_processor = PDFProcessor()
         processed_urls = []
         total_chunks = 0
-        duplicates = 0
-        
-        existing_data = db.child("websiteData").get().val() or {}
-        existing_urls = {v['url'] for v in existing_data.values() if 'url' in v}
         
         try:
             embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
@@ -150,10 +140,7 @@ async def process_websites(request: WebsiteUploadRequest):
 
         for url in request.urls:
             str_url = str(url)
-            if str_url in existing_urls:
-                duplicates += 1
-                continue
-                
+            
             try:
                 loader = WebBaseLoader([str_url])
                 docs = loader.load()
@@ -181,12 +168,6 @@ async def process_websites(request: WebsiteUploadRequest):
                     raise HTTPException(500, f"Vector store operation failed: {str(e)}")
                 
                 total_chunks += len(chunks)
-                
-                db.child("websiteData").push({
-                    "url": str_url,
-                    "processed_at": time.time(),
-                    "chunks": len(chunks)
-                })
                 processed_urls.append(str_url)
                 
             except Exception as e:
@@ -196,8 +177,7 @@ async def process_websites(request: WebsiteUploadRequest):
         return WebsiteProcessingResponse(
             message=f"Processed {len(processed_urls)} websites",
             processed_urls=processed_urls,
-            stored_chunks=total_chunks,
-            duplicates_skipped=duplicates
+            stored_chunks=total_chunks
         )
         
     except HTTPException as he:
@@ -211,11 +191,25 @@ async def ask_question(request: QuestionRequest):
         if not request.question.strip():
             raise HTTPException(422, "Empty question provided")
             
-        # Log the incoming question
-        print(f"Received question: {request.question}")
+        # Check if PDFs or websites have been processed
+        pdfs_processed = os.path.exists("./pdf_faiss_index")
+        websites_processed = os.path.exists("./web_faiss_index")
+        
+        # Get processed website URLs
+        website_urls = []
+        if websites_processed:
+            try:
+                web_index = FAISS.load_local(
+                    "./web_faiss_index", 
+                    GoogleGenerativeAIEmbeddings(model="models/embedding-001"),
+                    allow_dangerous_deserialization=True
+                )
+                website_urls = list(set(doc.metadata.get('source', '') for doc in web_index.docstore._dict.values()))
+            except Exception as e:
+                print(f"Error retrieving website URLs: {e}")
         
         try:
-            agent = get_conversational_chain()
+            agent = get_conversational_chain(pdfs_processed, website_urls)
         except Exception as agent_init_error:
             print(f"Agent initialization error: {str(agent_init_error)}")
             raise HTTPException(500, f"Failed to initialize agent: {str(agent_init_error)}")
@@ -250,15 +244,11 @@ async def ask_question(request: QuestionRequest):
 
 @app.get("/health")
 async def health_check():
-    try:
-        db.child("healthCheck").set(time.time())
-        indices = {
-            "pdf": os.path.exists("./pdf_faiss_index"),
-            "web": os.path.exists("./web_faiss_index")
-        }
-        return {"status": "healthy", "indices": indices}
-    except Exception as e:
-        return {"status": "unhealthy", "error": str(e)}
+    indices = {
+        "pdf": os.path.exists("./pdf_faiss_index"),
+        "web": os.path.exists("./web_faiss_index")
+    }
+    return {"status": "healthy", "indices": indices}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
