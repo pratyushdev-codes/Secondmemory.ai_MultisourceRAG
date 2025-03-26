@@ -121,20 +121,13 @@ def create_tools(pdfs_processed: bool = False, websites: List[str] = []):
         except Exception as e:
             print(f"Web tool creation failed: {e}")
     
-    # Add PDF search tool if PDFs processed
-    if pdfs_processed:
-        pdf_tool = Tool(
-            name="pdf_search",
-            func=search_pdfs,
-            description="Search within uploaded PDF documents"
-        )
-        tools.append(pdf_tool)
-    
-    return tools
-
+    # Add news tool
     try:
         news_urls = [
             "https://news.google.com/home?hl=en-IN&gl=IN&ceid=IN:en",
+            "https://www.bbc.com/news",
+            "https://www.reuters.com/world/"
+            "https://search.yahoo.com/search?p=india&fr=uh3_news_web&fr2=p%3Anews%2Cm%3Asb&.tsrc=uh3_news_web"
         ]
         
         news_loader = WebBaseLoader(
@@ -145,22 +138,33 @@ def create_tools(pdfs_processed: bool = False, websites: List[str] = []):
                 "headers": {"User-Agent": os.environ["USER_AGENT"]}
             }
         )
-        news_documents = pdf_processor.create_semantic_chunks("\n\n".join(doc.page_content for doc in news_loader.load()))
+        
+        news_documents = PDFProcessor().create_semantic_chunks(
+            "\n\n".join(doc.page_content for doc in news_loader.load())
+        )
         
         news_embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
         news_vectordb = FAISS.from_documents(news_documents, news_embeddings)
-        news_retriever = news_vectordb.as_retriever(
-            search_type="similarity",
-            search_kwargs={"k": 3}
-        )
+        
         news_tool = create_retriever_tool(
-            news_retriever,
+            news_vectordb.as_retriever(search_kwargs={"k": 3}),
             "news_search",
-            "Search for recent news, top news, trends, and real-time updates. Use this for current events and real-time knowledge."
+            "Search for recent news, top news, trends, and real-time updates. Provides global news coverage."
         )
         tools.append(news_tool)
     except Exception as e:
         print(f"News tool creation failed: {e}")
+    
+    # Add PDF search tool if PDFs processed
+    if pdfs_processed:
+        pdf_tool = Tool(
+            name="pdf_search",
+            func=search_pdfs,
+            description="Search within uploaded PDF documents"
+        )
+        tools.append(pdf_tool)
+    
+    return tools
 
 def search_pdfs(query: str) -> str:
     try:
