@@ -141,9 +141,36 @@ async def process_websites(request: WebsiteUploadRequest):
         for url in request.urls:
             str_url = str(url)
             
+            # Validate URL
+            if not validators.url(str_url):
+                print(f"Invalid URL: {str_url}")
+                continue
+
             try:
-                loader = WebBaseLoader([str_url])
-                docs = loader.load()
+                # More robust web loader with proper timeout and headers
+                loader = WebBaseLoader(
+                    [str_url],
+                    verify_ssl=False,
+                    requests_kwargs={
+                        "timeout": 10,
+                        "headers": {
+                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+                        }
+                    }
+                )
+                
+                # Error handling for loading
+                try:
+                    docs = loader.load()
+                except Exception as load_error:
+                    print(f"Failed to load {str_url}: {str(load_error)}")
+                    continue
+
+                # Skip if no content
+                if not docs or not docs[0].page_content.strip():
+                    print(f"No content found for {str_url}")
+                    continue
+
                 combined_text = "\n\n".join([d.page_content for d in docs])
                 
                 chunks = pdf_processor.create_semantic_chunks(
@@ -152,6 +179,11 @@ async def process_websites(request: WebsiteUploadRequest):
                     overlap=request.overlap
                 )
                 
+                # Skip if no chunks
+                if not chunks:
+                    print(f"No chunks created for {str_url}")
+                    continue
+
                 try:
                     if os.path.exists("./web_faiss_index"):
                         web_db = FAISS.load_local(
@@ -164,15 +196,19 @@ async def process_websites(request: WebsiteUploadRequest):
                         web_db = FAISS.from_documents(chunks, embeddings)
                     
                     web_db.save_local("./web_faiss_index")
-                except Exception as e:
-                    raise HTTPException(500, f"Vector store operation failed: {str(e)}")
+                except Exception as store_error:
+                    print(f"Vector store error for {str_url}: {str(store_error)}")
+                    continue
                 
                 total_chunks += len(chunks)
                 processed_urls.append(str_url)
                 
             except Exception as e:
-                print(f"Failed {str_url}: {str(e)}")
+                print(f"Unexpected error processing {str_url}: {str(e)}")
                 continue
+
+        if not processed_urls:
+            raise HTTPException(400, "No valid websites could be processed")
 
         return WebsiteProcessingResponse(
             message=f"Processed {len(processed_urls)} websites",
