@@ -13,85 +13,17 @@ import google.generativeai as genai
 import os
 from dotenv import load_dotenv
 from PyPDF2 import PdfReader
-from typing import List
-from pyrebase import pyrebase  # Change this line
 from typing import List, Optional
 from io import BytesIO
 import time
-from langchain_community.document_loaders import WebBaseLoader
-# from firebase import Firebase
-import pyrebase
-os.environ["USER_AGENT"] = "secondmemory.ai/1.0 (birole.pratyush@gmail.com)"
+
 # Load environment variables
 load_dotenv()
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
-
-
-## Firebase configuration
-
-
-
-# Firebase configuration
-# Initialize Firebase Admin SDK
-
-# Firebase configuration (keep this as in original code)
-config = {
-    "apiKey": "AIzaSyAzvf9coRhksEk8Zhcwuw4EVKjJgcQovgY",
-    "authDomain": "secondmemoryai.firebaseapp.com",
-    "databaseURL": "https://secondmemoryai-default-rtdb.firebaseio.com",
-    "storageBucket": "secondmemoryai.appspot.com"
-}
-
-# firebase = pyrebase.initialize_app(config)
-# db = firebase.database()
-
-try:
-    firebase = pyrebase.initialize_app(config)
-    db = firebase.database()
-except Exception as e:
-    print(f"Firebase initialization error: {str(e)}")
-    # Provide a fallback db that won't crash your app
-    class DummyDB:
-        def child(self, path):
-            return self
-        def get(self):
-            return DummyResponse()
-        def push(self):
-            return self
-        def set(self, value):
-            pass
-            
-    class DummyResponse:
-        def val(self):
-            return {}
-            
-    db = DummyDB()
-    
+os.environ["USER_AGENT"] = "secondmemory.ai/1.0 (birole.pratyush@gmail.com)"
 
 class PDFProcessor:
-    def __init__(self):
-        self.fetched_web_urls = self._get_web_urls()
-
-    def _get_web_urls(self) -> List[str]:
-        """Fetch website URLs from Firebase Realtime Database using python-firebase"""
-        try:
-            # Get website data using the third-party Firebase library
-            website_data = db.child("websiteData").get().val()
-            
-            if not website_data:
-                return []
-
-            # Extract URLs from the nested Firebase structure
-            return [
-                entry.get('url') 
-                for entry in website_data.values() 
-                if entry and 'url' in entry
-            ]
-        except Exception as e:
-            print(f"Error fetching web URLs from Firebase: {e}")
-            return []
-            
     def get_pdf_text(self, pdf_contents: List[bytes]) -> str:
         """Extract text from PDF bytes"""
         text = ""
@@ -136,8 +68,6 @@ class PDFProcessor:
                 print(f"Error processing section {i}: {str(e)}")
                 continue
                 
-            time.sleep(0.1)
-            
         return documents
         
     def get_vector_store(self, documents: List[Document]) -> Optional[FAISS]:
@@ -147,14 +77,14 @@ class PDFProcessor:
             
         try:
             embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-            vector_store = FAISS.from_documents(documents, embedding=embeddings)
+            vector_store = FAISS.from_documents(documents, embeddings)
             vector_store.save_local("faiss_index")
             return vector_store
         except Exception as e:
             print(f"Error creating vector store: {str(e)}")
             return None
 
-def create_tools(pdf_processor: PDFProcessor):
+def create_tools(pdfs_processed: bool = False, websites: List[str] = []):
     """Create tools for the agent"""
     tools = []
     
@@ -168,18 +98,18 @@ def create_tools(pdf_processor: PDFProcessor):
     arxiv_tool = ArxivQueryRun(api_wrapper=arxiv)
     tools.append(arxiv_tool)
     
-    # Add web search tool if URLs available
-    if pdf_processor.fetched_web_urls:
+    # Add web search tool if websites provided
+    if websites:
         try:
             loader = WebBaseLoader(
-                pdf_processor.fetched_web_urls,
+                websites,
                 verify_ssl=False,
                 requests_kwargs={
                     "timeout": 10,
                     "headers": {"User-Agent": os.environ["USER_AGENT"]}
                 }
             )
-            documents = pdf_processor.create_semantic_chunks("\n\n".join(doc.page_content for doc in loader.load()))
+            documents = PDFProcessor().create_semantic_chunks("\n\n".join(doc.page_content for doc in loader.load()))
             embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
             vectordb = FAISS.from_documents(documents, embeddings)
             web_tool = create_retriever_tool(
@@ -191,44 +121,14 @@ def create_tools(pdf_processor: PDFProcessor):
         except Exception as e:
             print(f"Web tool creation failed: {e}")
     
-    # Add News Tool
-    try:
-        news_urls = [
-            "https://news.google.com/home?hl=en-IN&gl=IN&ceid=IN:en",
-        ]
-        
-        news_loader = WebBaseLoader(
-            news_urls,
-            verify_ssl=False,
-            requests_kwargs={
-                "timeout": 10,
-                "headers": {"User-Agent": os.environ["USER_AGENT"]}
-            }
+    # Add PDF search tool if PDFs processed
+    if pdfs_processed:
+        pdf_tool = Tool(
+            name="pdf_search",
+            func=search_pdfs,
+            description="Search within uploaded PDF documents"
         )
-        news_documents = pdf_processor.create_semantic_chunks("\n\n".join(doc.page_content for doc in news_loader.load()))
-        
-        news_embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-        news_vectordb = FAISS.from_documents(news_documents, news_embeddings)
-        news_retriever = news_vectordb.as_retriever(
-            search_type="similarity",
-            search_kwargs={"k": 3}
-        )
-        news_tool = create_retriever_tool(
-            news_retriever,
-            "news_search",
-            "Search for recent news, top news, trends, and real-time updates. Use this for current events and real-time knowledge."
-        )
-        tools.append(news_tool)
-    except Exception as e:
-        print(f"News tool creation failed: {e}")
-            
-    # Add PDF search tool
-    pdf_tool = Tool(
-        name="pdf_search",
-        func=search_pdfs,
-        description="Search within uploaded PDF documents"
-    )
-    tools.append(pdf_tool)
+        tools.append(pdf_tool)
     
     return tools
 
@@ -253,7 +153,7 @@ def search_pdfs(query: str) -> str:
     except Exception as e:
         return f"ERROR: {str(e)}"
 
-def get_conversational_chain():
+def get_conversational_chain(pdfs_processed: bool = False, websites: List[str] = []):
     """Create the conversational chain"""
     llm = ChatGoogleGenerativeAI(
         model="gemini-1.5-flash",
@@ -263,8 +163,7 @@ def get_conversational_chain():
         max_output_tokens=2048
     )
     
-    pdf_processor = PDFProcessor()
-    tools = create_tools(pdf_processor)
+    tools = create_tools(pdfs_processed, websites)
     
     memory = ConversationBufferMemory(
         memory_key="chat_history",
@@ -272,12 +171,10 @@ def get_conversational_chain():
     )
     
     system_message = """You are a helpful AI assistant that can search through multiple sources including PDFs, Wikipedia, Arxiv, and web documentation.
-    When using the pdf_search tool:
+    When using the tools:
     - If you receive 'NO_PDF_AVAILABLE', inform the user that no PDFs have been uploaded yet.
     - If you receive 'NO_RELEVANT_INFO', inform the user that no relevant information was found.
-    - If you receive actual content, incorporate it into your response with citations.
-    
-    Always provide detailed answers by combining information from multiple sources when appropriate."""
+    - Always provide detailed answers by combining information from multiple sources when appropriate."""
     
     return initialize_agent(
         tools,
@@ -289,56 +186,15 @@ def get_conversational_chain():
         early_stopping_method="generate",
         handle_parsing_errors=True,
         system_message=system_message,
-        return_intermediate_steps=True  # Add this line
+        return_intermediate_steps=True
     )
 
-# Then update the handle_user_input function:
-# def handle_user_input(user_question: str, agent_executor: AgentExecutor) -> dict:
-#     """Process user input and return response with intermediate steps"""
-#     try:
-#         response = agent_executor.invoke({
-#             "input": user_question,
-#         })
-        
-#         # Extract intermediate steps
-#         steps = []
-#         if "intermediate_steps" in response:
-#             for step in response["intermediate_steps"]:
-#                 # Extract action details
-#                 action = step[0]
-#                 observation = step[1]
-                
-#                 # Format action details
-#                 action_details = {
-#                     "tool": action.tool if hasattr(action, 'tool') else str(action),
-#                     "tool_input": action.tool_input if hasattr(action, 'tool_input') else "",
-#                     "log": action.log if hasattr(action, 'log') else ""
-#                 }
-                
-#                 # Add step to list
-#                 steps.append({
-#                     "action": action_details,
-#                     "observation": str(observation)
-#                 })
-        
-#         return {
-#             "final_response": response["output"],
-#             "intermediate_steps": steps
-#         }
-#     except Exception as e:
-#         raise Exception(f"Error processing question: {str(e)}") 
 def handle_user_input(user_question: str, agent_executor: AgentExecutor) -> dict:
     """Process user input and return response with intermediate steps"""
     try:
-        # Add verbose logging
-        print(f"Processing question: {user_question}")
-        
         response = agent_executor.invoke({
             "input": user_question,
         })
-        
-        # Detailed logging of the response
-        print(f"Agent response: {response}")
         
         # Extract intermediate steps
         steps = []
@@ -366,7 +222,6 @@ def handle_user_input(user_question: str, agent_executor: AgentExecutor) -> dict
             "intermediate_steps": steps
         }
     except Exception as e:
-        # More detailed error logging
         import traceback
         print(f"Error processing question: {str(e)}")
         print(traceback.format_exc())
