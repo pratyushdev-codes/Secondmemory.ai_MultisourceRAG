@@ -132,6 +132,36 @@ def create_tools(pdfs_processed: bool = False, websites: List[str] = []):
     
     return tools
 
+    try:
+        news_urls = [
+            "https://news.google.com/home?hl=en-IN&gl=IN&ceid=IN:en",
+        ]
+        
+        news_loader = WebBaseLoader(
+            news_urls,
+            verify_ssl=False,
+            requests_kwargs={
+                "timeout": 10,
+                "headers": {"User-Agent": os.environ["USER_AGENT"]}
+            }
+        )
+        news_documents = pdf_processor.create_semantic_chunks("\n\n".join(doc.page_content for doc in news_loader.load()))
+        
+        news_embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+        news_vectordb = FAISS.from_documents(news_documents, news_embeddings)
+        news_retriever = news_vectordb.as_retriever(
+            search_type="similarity",
+            search_kwargs={"k": 3}
+        )
+        news_tool = create_retriever_tool(
+            news_retriever,
+            "news_search",
+            "Search for recent news, top news, trends, and real-time updates. Use this for current events and real-time knowledge."
+        )
+        tools.append(news_tool)
+    except Exception as e:
+        print(f"News tool creation failed: {e}")
+
 def search_pdfs(query: str) -> str:
     try:
         embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
