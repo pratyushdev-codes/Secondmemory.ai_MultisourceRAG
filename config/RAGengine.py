@@ -122,7 +122,7 @@ def create_tools(pdfs_processed: bool = False, websites: List[str] = []):
                     "headers": {
                         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
                     },
-                    "verify": False
+                    "verify": True 
                 }
             )
             documents = PDFProcessor().create_semantic_chunks("\n\n".join(doc.page_content for doc in loader.load()))
@@ -227,6 +227,7 @@ def get_conversational_chain(pdfs_processed: bool = False, websites: List[str] =
     memory = ConversationBufferMemory(
         memory_key="chat_history",
         return_messages=True
+        output_key="output" 
     )
     
     system_message = """You are a helpful AI assistant that can search through multiple sources including PDFs, Wikipedia, Arxiv, and web documentation.
