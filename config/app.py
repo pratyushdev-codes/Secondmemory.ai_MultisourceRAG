@@ -12,13 +12,25 @@ import time
 import validators
 from apscheduler.schedulers.background import BackgroundScheduler
 import shutil
+import logging
 from config.RAGengine import (
     PDFProcessor,
     get_conversational_chain,
     handle_user_input
 )
 
-app = FastAPI(title="Multisource RAG API", version="2.0")
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('app_server.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+app = FastAPI(title="Multisource RAG API", version="2.1")
 
 # CORS Configuration
 app.add_middleware(
@@ -66,9 +78,9 @@ def check_and_delete_old_index():
                 last_modified = os.path.getmtime(index_dir)
                 if (time.time() - last_modified) > 900:
                     shutil.rmtree(index_dir)
-                    print(f"Cleaned {index_dir}")
+                    logger.info(f"Cleaned {index_dir}")
         except Exception as e:
-            print(f"Index cleanup error: {str(e)}")
+            logger.error(f"Index cleanup error: {str(e)}")
 
 @app.on_event("startup")
 async def startup_event():
@@ -124,6 +136,7 @@ async def upload_pdfs(files: List[UploadFile] = File(...)):
     except HTTPException as he:
         raise he
     except Exception as e:
+        logger.error(f"PDF processing failed: {str(e)}")
         raise HTTPException(500, f"PDF processing failed: {str(e)}")
 
 @app.post("/process-websites/", response_model=WebsiteProcessingResponse)
@@ -143,32 +156,26 @@ async def process_websites(request: WebsiteUploadRequest):
             
             # Validate URL
             if not validators.url(str_url):
-                print(f"Invalid URL: {str_url}")
+                logger.warning(f"Invalid URL: {str_url}")
                 continue
 
             try:
-                # More robust web loader with proper timeout and headers
                 loader = WebBaseLoader(
                     [str_url],
-                    verify_ssl=False,
                     requests_kwargs={
                         "timeout": 10,
                         "headers": {
                             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-                        }
+                        },
+                        "verify": False
                     }
                 )
                 
-                # Error handling for loading
-                try:
-                    docs = loader.load()
-                except Exception as load_error:
-                    print(f"Failed to load {str_url}: {str(load_error)}")
-                    continue
-
+                docs = loader.load()
+                
                 # Skip if no content
                 if not docs or not docs[0].page_content.strip():
-                    print(f"No content found for {str_url}")
+                    logger.warning(f"No content found for {str_url}")
                     continue
 
                 combined_text = "\n\n".join([d.page_content for d in docs])
@@ -181,7 +188,7 @@ async def process_websites(request: WebsiteUploadRequest):
                 
                 # Skip if no chunks
                 if not chunks:
-                    print(f"No chunks created for {str_url}")
+                    logger.warning(f"No chunks created for {str_url}")
                     continue
 
                 try:
@@ -197,14 +204,14 @@ async def process_websites(request: WebsiteUploadRequest):
                     
                     web_db.save_local("./web_faiss_index")
                 except Exception as store_error:
-                    print(f"Vector store error for {str_url}: {str(store_error)}")
+                    logger.error(f"Vector store error for {str_url}: {str(store_error)}")
                     continue
                 
                 total_chunks += len(chunks)
                 processed_urls.append(str_url)
                 
             except Exception as e:
-                print(f"Unexpected error processing {str_url}: {str(e)}")
+                logger.error(f"Unexpected error processing {str_url}: {str(e)}")
                 continue
 
         if not processed_urls:
@@ -219,6 +226,7 @@ async def process_websites(request: WebsiteUploadRequest):
     except HTTPException as he:
         raise he
     except Exception as e:
+        logger.error(f"Website processing failed: {str(e)}")
         raise HTTPException(500, f"Website processing failed: {str(e)}")
 
 @app.post("/ask/", response_model=QuestionResponse)
@@ -242,21 +250,20 @@ async def ask_question(request: QuestionRequest):
                 )
                 website_urls = list(set(doc.metadata.get('source', '') for doc in web_index.docstore._dict.values()))
             except Exception as e:
-                print(f"Error retrieving website URLs: {e}")
-                # Continue even if website URL retrieval fails
+                logger.error(f"Error retrieving website URLs: {e}")
         
         try:
             # Add a timeout for agent initialization
             agent = get_conversational_chain(pdfs_processed, website_urls)
         except Exception as agent_init_error:
-            print(f"Agent initialization error: {str(agent_init_error)}")
+            logger.error(f"Agent initialization error: {str(agent_init_error)}")
             # If news tool creation fails, try without news sources
             agent = get_conversational_chain(pdfs_processed, [])
         
         try:
             response = handle_user_input(request.question, agent)
         except Exception as processing_error:
-            print(f"Question processing error: {str(processing_error)}")
+            logger.error(f"Question processing error: {str(processing_error)}")
             raise HTTPException(500, f"Query processing failed: {str(processing_error)}")
         
         validated_steps = []
@@ -277,8 +284,8 @@ async def ask_question(request: QuestionRequest):
         raise he
     except Exception as e:
         import traceback
-        print(f"Unhandled error: {str(e)}")
-        print(traceback.format_exc())
+        logger.error(f"Unhandled error: {str(e)}")
+        logger.error(traceback.format_exc())
         raise HTTPException(500, f"Unexpected error: {str(e)}")
         
 @app.get("/health")
