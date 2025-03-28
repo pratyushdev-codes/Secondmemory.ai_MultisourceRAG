@@ -16,6 +16,19 @@ from PyPDF2 import PdfReader
 from typing import List, Optional
 from io import BytesIO
 import time
+import logging
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('rag_app.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -65,7 +78,7 @@ class PDFProcessor:
                     ))
                     
             except Exception as e:
-                print(f"Error processing section {i}: {str(e)}")
+                logger.error(f"Error processing section {i}: {str(e)}")
                 continue
                 
         return documents
@@ -81,9 +94,10 @@ class PDFProcessor:
             vector_store.save_local("faiss_index")
             return vector_store
         except Exception as e:
-            print(f"Error creating vector store: {str(e)}")
+            logger.error(f"Error creating vector store: {str(e)}")
             return None
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def create_tools(pdfs_processed: bool = False, websites: List[str] = []):
     """Create tools for the agent"""
     tools = []
@@ -103,11 +117,12 @@ def create_tools(pdfs_processed: bool = False, websites: List[str] = []):
         try:
             loader = WebBaseLoader(
                 websites,
-                verify_ssl=True,  # Enable SSL verification
                 requests_kwargs={
                     "timeout": 10,
-                    "headers": {"User-Agent": os.environ["USER_AGENT"]},
-                    "verify_ssl": True  # Explicit SSL verification
+                    "headers": {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+                    },
+                    "verify": False
                 }
             )
             documents = PDFProcessor().create_semantic_chunks("\n\n".join(doc.page_content for doc in loader.load()))
@@ -120,41 +135,34 @@ def create_tools(pdfs_processed: bool = False, websites: List[str] = []):
             )
             tools.append(web_tool)
         except Exception as e:
-            print(f"Web tool creation failed: {e}")
+            logger.error(f"Web tool creation failed: {e}")
     
-    # Add news tool with more robust error handling
+    # Add news tool 
     try:
-        # Use smaller set of news sources to reduce load
-        news_urls = [
-            "https://www.reuters.com/world/"  # More reliable news source
-        ]
+        news_urls = ["https://www.reuters.com/world/"]
         
         loader = WebBaseLoader(
             news_urls,
-            verify_ssl=True,  # Enable SSL verification
             requests_kwargs={
-                "timeout": 15,  # Increased timeout
+                "timeout": 15,
                 "headers": {
-                    "User-Agent": os.environ["USER_AGENT"],
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
                 },
-                "verify_ssl": True  # Explicit SSL verification
+                "verify": False
             }
         )
         
-        # Limit the amount of text processed
         loaded_docs = loader.load()
         combined_text = "\n\n".join(
-            doc.page_content[:2000] for doc in loaded_docs  # Limit text length
+            doc.page_content[:2000] for doc in loaded_docs
         )
         
         news_documents = PDFProcessor().create_semantic_chunks(
             combined_text,
-            chunk_size=300,  # Smaller chunk size
+            chunk_size=300,
             overlap=30
         )
         
-        # Check if we have documents before creating vector store
         if news_documents:
             news_embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
             news_vectordb = FAISS.from_documents(news_documents, news_embeddings)
@@ -166,10 +174,10 @@ def create_tools(pdfs_processed: bool = False, websites: List[str] = []):
             )
             tools.append(news_tool)
         else:
-            print("No news documents could be processed")
+            logger.warning("No news documents could be processed")
     
     except Exception as e:
-        print(f"News tool creation failed: {e}")
+        logger.error(f"News tool creation failed: {e}")
     
     # Add PDF search tool if PDFs processed
     if pdfs_processed:
@@ -201,6 +209,7 @@ def search_pdfs(query: str) -> str:
         return "\n\n".join(f"From PDF Document:\n{doc.page_content}" for doc in docs)
             
     except Exception as e:
+        logger.error(f"PDF search error: {str(e)}")
         return f"ERROR: {str(e)}"
 
 def get_conversational_chain(pdfs_processed: bool = False, websites: List[str] = []):
@@ -273,8 +282,15 @@ def handle_user_input(user_question: str, agent_executor: AgentExecutor) -> dict
         }
     except Exception as e:
         import traceback
-        print(f"Error processing question: {str(e)}")
-        print(traceback.format_exc())
+        logger.error(f"Error processing question: {str(e)}")
+        logger.error(traceback.format_exc())
+        
+        # Specific handling for quota exhaustion
+        if "ResourceExhausted" in str(e) or "429" in str(e):
+            return {
+                "final_response": "I'm temporarily unable to process your request due to API quota limits. Please try again later.",
+                "intermediate_steps": []
+            }
         
         return {
             "final_response": f"An error occurred: {str(e)}",
