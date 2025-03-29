@@ -226,7 +226,7 @@ def get_conversational_chain(pdfs_processed: bool = False, websites: List[str] =
     
     memory = ConversationBufferMemory(
         memory_key="chat_history",
-        return_messages=True
+        return_messages=True,
         output_key="output" 
     )
     
