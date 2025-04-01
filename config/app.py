@@ -151,6 +151,9 @@ async def process_websites(request: WebsiteUploadRequest):
         except Exception as e:
             raise HTTPException(500, f"Embeddings initialization failed: {str(e)}")
 
+        # Create a list to collect all documents from different URLs
+        all_web_documents = []
+
         for url in request.urls:
             str_url = str(url)
             
@@ -163,7 +166,7 @@ async def process_websites(request: WebsiteUploadRequest):
                 loader = WebBaseLoader(
                     [str_url],
                     requests_kwargs={
-                        "timeout": 10,
+                        "timeout": 30, # Increased timeout
                         "headers": {
                             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
                         },
@@ -183,7 +186,8 @@ async def process_websites(request: WebsiteUploadRequest):
                 chunks = pdf_processor.create_semantic_chunks(
                     combined_text,
                     chunk_size=request.chunk_size,
-                    overlap=request.overlap
+                    overlap=request.overlap,
+                    source_url=str_url  # Explicitly pass the URL as source
                 )
                 
                 # Skip if no chunks
@@ -191,28 +195,35 @@ async def process_websites(request: WebsiteUploadRequest):
                     logger.warning(f"No chunks created for {str_url}")
                     continue
 
-                try:
-                    if os.path.exists("./web_faiss_index"):
-                        web_db = FAISS.load_local(
-                            "./web_faiss_index", 
-                            embeddings,
-                            allow_dangerous_deserialization=True
-                        )
-                        web_db.add_documents(chunks)
-                    else:
-                        web_db = FAISS.from_documents(chunks, embeddings)
-                    
-                    web_db.save_local("./web_faiss_index")
-                except Exception as store_error:
-                    logger.error(f"Vector store error for {str_url}: {str(store_error)}")
-                    continue
-                
+                # Add chunks to the collection
+                all_web_documents.extend(chunks)
                 total_chunks += len(chunks)
                 processed_urls.append(str_url)
+                
+                logger.info(f"Successfully processed {str_url} with {len(chunks)} chunks")
                 
             except Exception as e:
                 logger.error(f"Unexpected error processing {str_url}: {str(e)}")
                 continue
+
+        # After processing all URLs, save to vector store
+        if all_web_documents:
+            try:
+                if os.path.exists("./web_faiss_index"):
+                    web_db = FAISS.load_local(
+                        "./web_faiss_index", 
+                        embeddings,
+                        allow_dangerous_deserialization=True
+                    )
+                    web_db.add_documents(all_web_documents)
+                else:
+                    web_db = FAISS.from_documents(all_web_documents, embeddings)
+                
+                web_db.save_local("./web_faiss_index")
+                logger.info(f"Saved {len(all_web_documents)} documents to web_faiss_index")
+            except Exception as store_error:
+                logger.error(f"Vector store error: {str(store_error)}")
+                raise HTTPException(500, f"Failed to store web content: {str(store_error)}")
 
         if not processed_urls:
             raise HTTPException(400, "No valid websites could be processed")
@@ -248,7 +259,16 @@ async def ask_question(request: QuestionRequest):
                     GoogleGenerativeAIEmbeddings(model="models/embedding-001"),
                     allow_dangerous_deserialization=True
                 )
-                website_urls = list(set(doc.metadata.get('source', '') for doc in web_index.docstore._dict.values()))
+                # Extract unique source URLs from metadata
+                for doc in web_index.docstore._dict.values():
+                    if 'source' in doc.metadata and doc.metadata['source']:
+                        website_urls.append(doc.metadata['source'])
+                
+                # Remove duplicates while preserving order
+                seen = set()
+                website_urls = [x for x in website_urls if not (x in seen or seen.add(x))]
+                
+                logger.info(f"Retrieved {len(website_urls)} website URLs: {website_urls[:5] if len(website_urls) > 5 else website_urls}")
             except Exception as e:
                 logger.error(f"Error retrieving website URLs: {e}")
         
@@ -257,7 +277,7 @@ async def ask_question(request: QuestionRequest):
             agent = get_conversational_chain(pdfs_processed, website_urls)
         except Exception as agent_init_error:
             logger.error(f"Agent initialization error: {str(agent_init_error)}")
-            # If news tool creation fails, try without news sources
+            # If agent initialization fails, try without passing website URLs
             agent = get_conversational_chain(pdfs_processed, [])
         
         try:
