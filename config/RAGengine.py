@@ -18,6 +18,8 @@ from io import BytesIO
 import time
 import logging
 from tenacity import retry, stop_after_attempt, wait_exponential
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Configure logging
 logging.basicConfig(
@@ -46,8 +48,8 @@ class PDFProcessor:
                 text += page.extract_text() or ""
         return text
         
-    def create_semantic_chunks(self, text: str, chunk_size: int = 512, overlap: int = 50) -> List[Document]:
-        """Create semantic chunks from text"""
+    def create_semantic_chunks(self, text: str, chunk_size: int = 512, overlap: int = 50, source_url: str = None) -> List[Document]:
+        """Create semantic chunks from text with proper source tracking"""
         initial_splits = text.split('\n\n')
         
         splitter = RecursiveCharacterTextSplitter(
@@ -63,18 +65,27 @@ class PDFProcessor:
                 continue
                 
             try:
+                metadata = {
+                    "chunk_id": f"section_{i}", 
+                    "chunk_type": "full_section"
+                }
+                
+                # Add source URL if provided
+                if source_url:
+                    metadata["source"] = source_url
+                    
                 if len(section) > chunk_size:
                     chunks = splitter.split_text(section)
                     documents.extend([
                         Document(
                             page_content=chunk,
-                            metadata={"source": f"section_{i}", "chunk_type": "split_chunk"}
+                            metadata=metadata
                         ) for chunk in chunks if chunk.strip()
                     ])
                 else:
                     documents.append(Document(
                         page_content=section,
-                        metadata={"source": f"section_{i}", "chunk_type": "full_section"}
+                        metadata=metadata
                     ))
                     
             except Exception as e:
@@ -125,15 +136,24 @@ def create_tools(pdfs_processed: bool = False, websites: List[str] = []):
                     "verify": False 
                 }
             )
-            documents = PDFProcessor().create_semantic_chunks("\n\n".join(doc.page_content for doc in loader.load()))
-            embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-            vectordb = FAISS.from_documents(documents, embeddings)
-            web_tool = create_retriever_tool(
-                vectordb.as_retriever(search_kwargs={"k": 3}),
-                "web_search",
-                "Search web documentation for technical information."
-            )
-            tools.append(web_tool)
+            loaded_docs = loader.load()
+            
+            # Combine the text with proper metadata
+            web_documents = []
+            pdf_processor = PDFProcessor()
+            for doc in loaded_docs:
+                chunks = pdf_processor.create_semantic_chunks(doc.page_content, source_url=doc.metadata.get("source", "unknown"))
+                web_documents.extend(chunks)
+                
+            if web_documents:
+                embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+                vectordb = FAISS.from_documents(web_documents, embeddings)
+                web_tool = create_retriever_tool(
+                    vectordb.as_retriever(search_kwargs={"k": 3}),
+                    "web_search",
+                    "Search web documentation for technical information."
+                )
+                tools.append(web_tool)
         except Exception as e:
             logger.error(f"Web tool creation failed: {e}")
     
@@ -153,15 +173,21 @@ def create_tools(pdfs_processed: bool = False, websites: List[str] = []):
         )
         
         loaded_docs = loader.load()
-        combined_text = "\n\n".join(
-            doc.page_content[:2000] for doc in loaded_docs
-        )
         
-        news_documents = PDFProcessor().create_semantic_chunks(
-            combined_text,
-            chunk_size=300,
-            overlap=30
-        )
+        # Combine text with proper metadata
+        news_documents = []
+        pdf_processor = PDFProcessor()
+        
+        for doc in loaded_docs:
+            # Limit content to avoid processing too much text
+            limited_content = doc.page_content[:2000]
+            chunks = pdf_processor.create_semantic_chunks(
+                limited_content,
+                chunk_size=300,
+                overlap=30,
+                source_url=doc.metadata.get("source", "news")
+            )
+            news_documents.extend(chunks)
         
         if news_documents:
             news_embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
