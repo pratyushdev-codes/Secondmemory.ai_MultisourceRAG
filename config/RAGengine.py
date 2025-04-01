@@ -70,18 +70,21 @@ class PDFProcessor:
                     "chunk_type": "full_section"
                 }
                 
-                # Add source URL if provided
+                # Add source URL if provided and ensure it's a string
                 if source_url:
-                    metadata["source"] = source_url
+                    metadata["source"] = str(source_url)
                     
                 if len(section) > chunk_size:
                     chunks = splitter.split_text(section)
-                    documents.extend([
-                        Document(
+                    for j, chunk in enumerate(chunks):
+                        if not chunk.strip():
+                            continue
+                        chunk_metadata = metadata.copy()
+                        chunk_metadata["chunk_id"] = f"section_{i}_chunk_{j}"
+                        documents.append(Document(
                             page_content=chunk,
-                            metadata=metadata
-                        ) for chunk in chunks if chunk.strip()
-                    ])
+                            metadata=chunk_metadata
+                        ))
                 else:
                     documents.append(Document(
                         page_content=section,
@@ -108,6 +111,56 @@ class PDFProcessor:
             logger.error(f"Error creating vector store: {str(e)}")
             return None
 
+def search_pdfs(query: str) -> str:
+    try:
+        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+        if not os.path.exists("./pdf_faiss_index"):
+            return "NO_PDF_AVAILABLE"
+            
+        pdf_db = FAISS.load_local(
+            "./pdf_faiss_index", 
+            embeddings, 
+            allow_dangerous_deserialization=True
+        )
+        docs = pdf_db.similarity_search(query, k=3)
+        
+        if not docs:
+            return "NO_RELEVANT_INFO"
+            
+        return "\n\n".join(f"From PDF Document:\n{doc.page_content}" for doc in docs)
+            
+    except Exception as e:
+        logger.error(f"PDF search error: {str(e)}")
+        return f"ERROR: {str(e)}"
+
+def search_websites(query: str) -> str:
+    """Search within web content that's been processed and indexed"""
+    try:
+        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+        if not os.path.exists("./web_faiss_index"):
+            return "NO_WEB_CONTENT_AVAILABLE"
+            
+        web_db = FAISS.load_local(
+            "./web_faiss_index", 
+            embeddings, 
+            allow_dangerous_deserialization=True
+        )
+        docs = web_db.similarity_search(query, k=3)
+        
+        if not docs:
+            return "NO_RELEVANT_INFO"
+            
+        results = []
+        for doc in docs:
+            source = doc.metadata.get('source', 'Unknown Source')
+            results.append(f"From Web Document ({source}):\n{doc.page_content}")
+            
+        return "\n\n".join(results)
+            
+    except Exception as e:
+        logger.error(f"Web search error: {str(e)}")
+        return f"ERROR: {str(e)}"
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def create_tools(pdfs_processed: bool = False, websites: List[str] = []):
     """Create tools for the agent"""
@@ -116,46 +169,29 @@ def create_tools(pdfs_processed: bool = False, websites: List[str] = []):
     # Add Wikipedia tool
     wiki = WikipediaAPIWrapper(top_k_results=2, doc_content_chars_max=500)
     wiki_tool = WikipediaQueryRun(api_wrapper=wiki)
-    tools.append(wiki_tool)
+    tools.append(Tool(
+        name="wikipedia",
+        func=wiki_tool.run,
+        description="Search Wikipedia for general knowledge information."
+    ))
     
     # Add Arxiv tool
     arxiv = ArxivAPIWrapper(top_k_results=2, sort_by="relevancy")
     arxiv_tool = ArxivQueryRun(api_wrapper=arxiv)
-    tools.append(arxiv_tool)
+    tools.append(Tool(
+        name="arxiv",
+        func=arxiv_tool.run,
+        description="Search Arxiv for scientific papers and research."
+    ))
     
-    # Add web search tool if websites provided
-    if websites:
-        try:
-            loader = WebBaseLoader(
-                websites,
-                requests_kwargs={
-                    "timeout": 1000,
-                    "headers": {
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-                    },
-                    "verify": False 
-                }
-            )
-            loaded_docs = loader.load()
-            
-            # Combine the text with proper metadata
-            web_documents = []
-            pdf_processor = PDFProcessor()
-            for doc in loaded_docs:
-                chunks = pdf_processor.create_semantic_chunks(doc.page_content, source_url=doc.metadata.get("source", "unknown"))
-                web_documents.extend(chunks)
-                
-            if web_documents:
-                embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-                vectordb = FAISS.from_documents(web_documents, embeddings)
-                web_tool = create_retriever_tool(
-                    vectordb.as_retriever(search_kwargs={"k": 3}),
-                    "web_search",
-                    "Search web documentation for technical information."
-                )
-                tools.append(web_tool)
-        except Exception as e:
-            logger.error(f"Web tool creation failed: {e}")
+    # Add Web Search tool if web index exists or websites provided
+    if os.path.exists("./web_faiss_index") or websites:
+        web_tool = Tool(
+            name="web_search",
+            func=search_websites,
+            description="Search within processed web content for information"
+        )
+        tools.append(web_tool)
     
     # Add news tool 
     try:
@@ -216,28 +252,6 @@ def create_tools(pdfs_processed: bool = False, websites: List[str] = []):
     
     return tools
 
-def search_pdfs(query: str) -> str:
-    try:
-        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-        if not os.path.exists("./pdf_faiss_index"):
-            return "NO_PDF_AVAILABLE"
-            
-        pdf_db = FAISS.load_local(
-            "./pdf_faiss_index", 
-            embeddings, 
-            allow_dangerous_deserialization=True
-        )
-        docs = pdf_db.similarity_search(query, k=3)
-        
-        if not docs:
-            return "NO_RELEVANT_INFO"
-            
-        return "\n\n".join(f"From PDF Document:\n{doc.page_content}" for doc in docs)
-            
-    except Exception as e:
-        logger.error(f"PDF search error: {str(e)}")
-        return f"ERROR: {str(e)}"
-
 def get_conversational_chain(pdfs_processed: bool = False, websites: List[str] = []):
     """Create the conversational chain"""
     llm = ChatGoogleGenerativeAI(
@@ -259,6 +273,7 @@ def get_conversational_chain(pdfs_processed: bool = False, websites: List[str] =
     system_message = """You are a helpful AI assistant that can search through multiple sources including PDFs, Wikipedia, Arxiv, and web documentation.
     When using the tools:
     - If you receive 'NO_PDF_AVAILABLE', inform the user that no PDFs have been uploaded yet.
+    - If you receive 'NO_WEB_CONTENT_AVAILABLE', inform the user that no web URLs have been processed yet.
     - If you receive 'NO_RELEVANT_INFO', inform the user that no relevant information was found.
     - Always provide detailed answers by combining information from multiple sources when appropriate."""
     
