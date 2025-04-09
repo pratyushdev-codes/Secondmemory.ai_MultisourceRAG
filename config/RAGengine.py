@@ -38,6 +38,10 @@ genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
 os.environ["USER_AGENT"] = "secondmemory.ai/1.0 (birole.pratyush@gmail.com)"
 
+# Rate limiting constants
+API_CALL_DELAY = 2  # seconds between API calls
+TOOL_CREATION_DELAY = 1  # seconds between tool creation
+
 class PDFProcessor:
     def get_pdf_text(self, pdf_contents: List[bytes]) -> str:
         """Extract text from PDF bytes"""
@@ -103,6 +107,8 @@ class PDFProcessor:
             return None
             
         try:
+            # Add delay before API call
+            time.sleep(API_CALL_DELAY)
             embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
             vector_store = FAISS.from_documents(documents, embeddings)
             vector_store.save_local("faiss_index")
@@ -113,6 +119,8 @@ class PDFProcessor:
 
 def search_pdfs(query: str) -> str:
     try:
+        # Add delay before API call
+        time.sleep(API_CALL_DELAY)
         embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
         if not os.path.exists("./pdf_faiss_index"):
             return "NO_PDF_AVAILABLE"
@@ -136,6 +144,8 @@ def search_pdfs(query: str) -> str:
 def search_websites(query: str) -> str:
     """Search within web content that's been processed and indexed"""
     try:
+        # Add delay before API call
+        time.sleep(API_CALL_DELAY)
         embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
         if not os.path.exists("./web_faiss_index"):
             return "NO_WEB_CONTENT_AVAILABLE"
@@ -174,6 +184,8 @@ def create_tools(pdfs_processed: bool = False, websites: List[str] = []):
         func=wiki_tool.run,
         description="Search Wikipedia for general knowledge information."
     ))
+    # Add delay between tool creation
+    time.sleep(TOOL_CREATION_DELAY)
     
     # Add Arxiv tool
     arxiv = ArxivAPIWrapper(top_k_results=2, sort_by="relevancy")
@@ -183,6 +195,8 @@ def create_tools(pdfs_processed: bool = False, websites: List[str] = []):
         func=arxiv_tool.run,
         description="Search Arxiv for scientific papers and research."
     ))
+    # Add delay between tool creation
+    time.sleep(TOOL_CREATION_DELAY)
     
     # Add Web Search tool if web index exists or websites provided
     if os.path.exists("./web_faiss_index") or websites:
@@ -192,6 +206,8 @@ def create_tools(pdfs_processed: bool = False, websites: List[str] = []):
             description="Search within processed web content for information"
         )
         tools.append(web_tool)
+        # Add delay between tool creation
+        time.sleep(TOOL_CREATION_DELAY)
     
     # Add news tool 
     try:
@@ -226,6 +242,8 @@ def create_tools(pdfs_processed: bool = False, websites: List[str] = []):
             news_documents.extend(chunks)
         
         if news_documents:
+            # Add delay before API call for embeddings
+            time.sleep(API_CALL_DELAY)
             news_embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
             news_vectordb = FAISS.from_documents(news_documents, news_embeddings)
             
@@ -235,6 +253,8 @@ def create_tools(pdfs_processed: bool = False, websites: List[str] = []):
                 "Search for recent global news and updates from Reuters."
             )
             tools.append(news_tool)
+            # Add delay between tool creation
+            time.sleep(TOOL_CREATION_DELAY)
         else:
             logger.warning("No news documents could be processed")
     
@@ -249,11 +269,15 @@ def create_tools(pdfs_processed: bool = False, websites: List[str] = []):
             description="Search within uploaded PDF documents"
         )
         tools.append(pdf_tool)
+        # Add delay between tool creation
+        time.sleep(TOOL_CREATION_DELAY)
     
     return tools
 
 def get_conversational_chain(pdfs_processed: bool = False, websites: List[str] = []):
     """Create the conversational chain"""
+    # Add delay before creating LLM
+    time.sleep(API_CALL_DELAY)
     llm = ChatGoogleGenerativeAI(
         model="gemini-1.5-flash",
         temperature=0.5,
@@ -277,6 +301,8 @@ def get_conversational_chain(pdfs_processed: bool = False, websites: List[str] =
     - If you receive 'NO_RELEVANT_INFO', inform the user that no relevant information was found.
     - Always provide detailed answers by combining information from multiple sources when appropriate."""
     
+    # Add delay before creating agent
+    time.sleep(API_CALL_DELAY)
     return initialize_agent(
         tools,
         llm,
@@ -293,6 +319,8 @@ def get_conversational_chain(pdfs_processed: bool = False, websites: List[str] =
 def handle_user_input(user_question: str, agent_executor: AgentExecutor) -> dict:
     """Process user input and return response with intermediate steps"""
     try:
+        # Add delay before invoking agent
+        time.sleep(API_CALL_DELAY)
         response = agent_executor.invoke({
             "input": user_question,
         })
@@ -330,7 +358,7 @@ def handle_user_input(user_question: str, agent_executor: AgentExecutor) -> dict
         # Specific handling for quota exhaustion
         if "ResourceExhausted" in str(e) or "429" in str(e):
             return {
-                "final_response": "I'm temporarily unable to process your request due to API quota limits. Please try again later.",
+                "final_response": "I'm temporarily unable to process your request due to API quota limits. Please try again in a few moments.",
                 "intermediate_steps": []
             }
         
