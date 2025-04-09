@@ -30,6 +30,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Rate limiting constants
+API_CALL_DELAY = 2  # seconds between API calls
+WEBSITE_PROCESSING_DELAY = 3  # seconds between processing websites
+
 app = FastAPI(title="Multisource RAG API", version="2.1")
 
 # CORS Configuration
@@ -109,6 +113,8 @@ async def upload_pdfs(files: List[UploadFile] = File(...)):
         documents = pdf_processor.create_semantic_chunks(raw_text)
         
         try:
+            # Add delay before API call
+            time.sleep(API_CALL_DELAY)
             embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
         except Exception as e:
             raise HTTPException(500, f"Embeddings initialization failed: {str(e)}")
@@ -147,6 +153,8 @@ async def process_websites(request: WebsiteUploadRequest):
         total_chunks = 0
         
         try:
+            # Add delay before API call
+            time.sleep(API_CALL_DELAY)
             embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
         except Exception as e:
             raise HTTPException(500, f"Embeddings initialization failed: {str(e)}")
@@ -154,8 +162,12 @@ async def process_websites(request: WebsiteUploadRequest):
         # Create a list to collect all documents from different URLs
         all_web_documents = []
 
-        for url in request.urls:
+        for i, url in enumerate(request.urls):
             str_url = str(url)
+            
+            # Add delay between processing each website to prevent rate limiting
+            if i > 0:
+                time.sleep(WEBSITE_PROCESSING_DELAY)
             
             # Validate URL
             if not validators.url(str_url):
@@ -209,6 +221,10 @@ async def process_websites(request: WebsiteUploadRequest):
         # After processing all URLs, save to vector store
         if all_web_documents:
             try:
+                # Add delay before API call if multiple documents
+                if len(all_web_documents) > 10:
+                    time.sleep(API_CALL_DELAY)
+                    
                 if os.path.exists("./web_faiss_index"):
                     web_db = FAISS.load_local(
                         "./web_faiss_index", 
@@ -254,6 +270,8 @@ async def ask_question(request: QuestionRequest):
         website_urls = []
         if websites_processed:
             try:
+                # Add delay before API call
+                time.sleep(API_CALL_DELAY)
                 web_index = FAISS.load_local(
                     "./web_faiss_index", 
                     GoogleGenerativeAIEmbeddings(model="models/embedding-001"),
@@ -278,6 +296,7 @@ async def ask_question(request: QuestionRequest):
         except Exception as agent_init_error:
             logger.error(f"Agent initialization error: {str(agent_init_error)}")
             # If agent initialization fails, try without passing website URLs
+            time.sleep(API_CALL_DELAY)  # Add delay before retry
             agent = get_conversational_chain(pdfs_processed, [])
         
         try:
