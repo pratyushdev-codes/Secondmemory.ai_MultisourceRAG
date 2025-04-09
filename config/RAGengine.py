@@ -40,7 +40,7 @@ os.environ["USER_AGENT"] = "secondmemory.ai/1.0 (birole.pratyush@gmail.com)"
 
 # Rate limiting constants
 API_CALL_DELAY = 2  # seconds between API calls
-TOOL_CREATION_DELAY = 1  # seconds between tool creation
+TOOL_CREATION_DELAY = 2  # seconds between tool creation
 
 class PDFProcessor:
     def get_pdf_text(self, pdf_contents: List[bytes]) -> str:
